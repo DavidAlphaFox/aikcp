@@ -25,7 +25,7 @@ new(Size) ->
   init(#aikcp_buffer{data = Data, index = Index,
                      size = Size, unused = Size}).
 
-init(Buffer = #aikcp_buffer{index = Index}) ->
+init(#aikcp_buffer{index = Index} = Buffer) ->
   Index2 = init_index(Index, 0, array:size(Index) - 1),
   Buffer#aikcp_buffer{index = Index2}.
 
@@ -43,21 +43,21 @@ next(Prev, #aikcp_buffer{index = Index}) -> array:get(Prev, Index).
 
 data(Pos, #aikcp_buffer{data = Data}) -> array:get(Pos, Data).
 
-replace(Pos, Val, Buffer = #aikcp_buffer{data = Data}) ->
+replace(Pos, Val, #aikcp_buffer{data = Data} = Buffer) ->
   Data2 = array:set(Pos, Val, Data),
   Buffer#aikcp_buffer{data = Data2}.
 
 %% 得到一个可用的索引
-alloc(Buffer = #aikcp_buffer{free = ?LAST_INDEX}) -> {Buffer, ?LAST_INDEX};
-alloc(Buffer = #aikcp_buffer{free = Free,index = Index, unused = Unused}) ->
+alloc(#aikcp_buffer{free = ?LAST_INDEX} = Buffer) -> {Buffer, ?LAST_INDEX};
+alloc(#aikcp_buffer{free = Free,index = Index, unused = Unused} = Buffer) ->
   Pos = array:get(Free, Index),%% 下一个可用的位置
   Buffer2 = Buffer#aikcp_buffer{free = Pos, index = Index, unused = Unused - 1},
   {Buffer2, Free}.
 
 
-delete(Pos, ?LAST_INDEX,Buffer = #aikcp_buffer{index = Index, free = Free,
-                                               data = Data, unused = Unused,
-                                               tail = Tail}) ->
+delete(Pos, ?LAST_INDEX,
+       #aikcp_buffer{index = Index, free = Free,data = Data,
+                     unused = Unused,tail = Tail} = Buffer) ->
   Data2 = array:set(Pos, undefined, Data),
   Next = array:get(Pos, Index), %% 得到Pos指向的下一个位置
   Index2 = array:set(Pos, Free, Index), %% 将Pos所指向的下一个位置设为next
@@ -69,9 +69,9 @@ delete(Pos, ?LAST_INDEX,Buffer = #aikcp_buffer{index = Index, free = Free,
                       used = Next, free = Pos,
                       unused = Unused + 1, tail = Tail2};
 
-delete(Pos, Prev, Buffer = #aikcp_buffer{index = Index, free = Free,
-                                         data = Data, unused = Unused,
-                                         tail = Tail}) ->
+delete(Pos, Prev,
+       #aikcp_buffer{index = Index, free = Free,data = Data,
+                     unused = Unused,tail = Tail} = Buffer) ->
   Data2 = array:set(Pos, undefined, Data), %% 删除数据
   Next = array:get(Pos, Index),
   Index2 = array:set(Prev, Next, Index), %% 调整链表
