@@ -61,10 +61,10 @@ delete(Pos, ?LAST_INDEX,
   Data2 = array:set(Pos, undefined, Data),
   Next = array:get(Pos, Index), %% 得到Pos指向的下一个位置
   Index2 = array:set(Pos, Free, Index), %% 将Pos所指向的下一个位置设为next
-  Tail2 = if
-            Tail =:= Pos -> ?LAST_INDEX; %% 删除队尾
-            true -> Tail
-          end,
+  Tail2 =
+    if Tail =:= Pos -> ?LAST_INDEX; %% 删除队尾
+       true -> Tail
+    end,
   Buffer#aikcp_buffer{data = Data2, index = Index2,
                       used = Next, free = Pos,
                       unused = Unused + 1, tail = Tail2};
@@ -76,10 +76,10 @@ delete(Pos, Prev,
   Next = array:get(Pos, Index),
   Index2 = array:set(Prev, Next, Index), %% 调整链表
   Index3 = array:set(Pos, Free, Index2),
-  Tail2 = if
-            Tail =:= Pos -> Prev;
-            true -> Tail
-          end,
+  Tail2 =
+    if Tail =:= Pos -> Prev;
+       true -> Tail
+    end,
   Buffer#aikcp_buffer{data = Data2, index = Index3,
                       free = Pos, unused = Unused + 1, tail = Tail2}.
 insert(Prev, Val, Buffer) ->
@@ -90,10 +90,10 @@ insert(Prev, Val, Buffer) ->
                     used = Used, tail = Tail} = Buffer2,
       Index2 = array:set(Pos, Used, Index),
       Data2 = array:set(Pos, Val, Data),
-      Tail2 = if
-        Tail =:= ?LAST_INDEX -> Pos;
-        true -> Tail
-      end,
+      Tail2 =
+        if Tail =:= ?LAST_INDEX -> Pos;
+           true -> Tail
+        end,
       Buffer2#aikcp_buffer{data = Data2, index = Index2,
                            used = Pos, tail = Tail2};
     {Buffer2, Pos} ->
@@ -102,10 +102,10 @@ insert(Prev, Val, Buffer) ->
       Index2 = array:set(Pos, Next, Index),
       Index3 = array:set(Prev, Pos, Index2),
       Data2 = array:set(Pos, Val, Data),
-      Tail2 = if
-        Tail =:= Prev -> Pos;
-        true -> Tail
-      end,
+      Tail2 =
+        if Tail =:= Prev -> Pos;
+           true -> Tail
+        end,
       Buffer2#aikcp_buffer{data = Data2, index = Index3, tail = Tail2}
   end.
 

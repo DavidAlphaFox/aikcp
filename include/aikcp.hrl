@@ -85,9 +85,9 @@
                     stream = true,
                     datalist = []}).
 
--define(MATCH_KCP_SEG(Conv, Cmd, Frg, Wnd, Ts, Sn, Una, Len, Data, Left),
+-define(KCP_SEG(Conv, Cmd, Frg, Wnd, Ts, Sn, Una, Len, Data, Left),
   <<Conv:32/little, Cmd:8/little, Frg:8/little, Wnd:16/little,
     Ts:32/little, Sn:32/little, Una:32/little, Len:32/little,
     Data:Len/binary, Left/binary>>).
 
--define(MATCH_KCP_CONV(Conv),<<Conv:32/little,_/binary>>).
+-define(KCP_CONV(Conv),<<Conv:32/little,_/binary>>).
