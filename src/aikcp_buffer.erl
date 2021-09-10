@@ -1,0 +1,113 @@
+-module(aikcp_buffer).
+
+-export([new/1,
+         head/1,
+         next/2,
+         data/2,
+         replace/3,
+         delete/3,
+         insert/3,
+         append/2,
+         pop/1,
+         size/1]).
+
+-define(LAST_INDEX, -1).
+-record(aikcp_buffer,{data,
+                      index,
+                      used = ?LAST_INDEX,
+                      free = 0,
+                      size = 0,
+                      unused = 0,
+                      tail = ?LAST_INDEX}).
+new(Size) ->
+  Data = array:new(Size),
+  Index  = array:new(Size, {default, 0}),
+  init(#aikcp_buffer{data = Data, index = Index,
+                     size = Size, unused = Size}).
+
+init(Buffer = #aikcp_buffer{index = Index}) ->
+  Index2 = init_index(Index, 0, array:size(Index) - 1),
+  Buffer#aikcp_buffer{index = Index2}.
+
+init_index(Index, Last, Last) ->
+  array:set(Last, ?LAST_INDEX, Index);
+init_index(Index, Cur, Last) ->
+  Index2 = array:set(Cur, Cur + 1, Index),
+  init_index(Index2, Cur + 1, Last).
+
+
+size(#aikcp_buffer{size = Size}) ->Size.
+
+head(#aikcp_buffer{used = Used}) -> Used.
+next(Prev, #aikcp_buffer{index = Index}) -> array:get(Prev, Index).
+
+data(Pos, #aikcp_buffer{data = Data}) -> array:get(Pos, Data).
+
+replace(Pos, Val, Buffer = #aikcp_buffer{data = Data}) ->
+  Data2 = array:set(Pos, Val, Data),
+  Buffer#aikcp_buffer{data = Data2}.
+
+%% 得到一个可用的索引
+alloc(Buffer = #aikcp_buffer{free = ?LAST_INDEX}) -> {Buffer, ?LAST_INDEX};
+alloc(Buffer = #aikcp_buffer{free = Free,index = Index, unused = Unused}) ->
+  Pos = array:get(Free, Index),%% 下一个可用的位置
+  Buffer2 = Buffer#aikcp_buffer{free = Pos, index = Index, unused = Unused - 1},
+  {Buffer2, Free}.
+
+
+delete(Pos, ?LAST_INDEX,Buffer = #aikcp_buffer{index = Index, free = Free,
+                                               data = Data, unused = Unused,
+                                               tail = Tail}) ->
+  Data2 = array:set(Pos, undefined, Data),
+  Next = array:get(Pos, Index), %% 得到Pos指向的下一个位置
+  Index2 = array:set(Pos, Free, Index), %% 将Pos所指向的下一个位置设为next
+  Tail2 = if
+    Tail =:= Pos -> ?LAST_INDEX; %% 删除队尾
+    true -> Tail
+  end,
+  Buffer#aikcp_buffer{data = Data2, index = Index2,
+                      used = Next, free = Pos,
+                      unused = Unused + 1, tail = Tail2};
+
+delete(Pos, Prev, Buffer = #aikcp_buffer{index = Index, free = Free,
+                                         data = Data, unused = Unused,
+                                         tail = Tail}) ->
+  Data2 = array:set(Pos, undefined, Data), %% 删除数据
+  Next = array:get(Pos, Index),
+  Index2 = array:set(Prev, Next, Index), %% 调整链表
+  Index3 = array:set(Pos, Free, Index2),
+  Tail2 = if
+    Tail =:= Pos -> Prev;
+    true -> Tail
+  end,
+  Buffer#aikcp_buffer{data = Data2, index = Index3,
+                      free = Pos, unused = Unused + 1, tail = Tail2}.
+insert(Prev, Val, Buffer) ->
+  case alloc(Buffer) of
+    {_, ?LAST_INDEX} -> {error, buffer_overflow};
+    {Buffer2, Pos} when Prev =:= ?LAST_INDEX ->
+      #aikcp_buffer{data = Data, index = Index,
+                    used = Used, tail = Tail} = Buffer2,
+      Index2 = array:set(Pos, Used, Index),
+      Data2 = array:set(Pos, Val, Data),
+      Tail2 = if
+        Tail =:= ?LAST_INDEX -> Pos;
+        true -> Tail
+      end,
+      Buffer2#aikcp_buffer{data = Data2, index = Index2,
+                           used = Pos, tail = Tail2};
+    {Buffer2, Pos} ->
+      #aikcp_buffer{data = Data, index = Index, tail = Tail} = Buffer2,
+      Next = array:get(Prev, Index),
+      Index2 = array:set(Pos, Next, Index),
+      Index3 = array:set(Prev, Pos, Index2),
+      Data2 = array:set(Pos, Val, Data),
+      Tail2 = if
+        Tail =:= Prev -> Pos;
+        true -> Tail
+      end,
+      Buffer2#aikcp_buffer{data = Data2, index = Index3, tail = Tail2}
+  end.
+
+append(Val, Buffer) -> insert(Buffer#aikcp_buffer.tail, Val, Buffer).
+pop(Buffer) -> delete(Buffer#aikcp_buffer.used,?LAST_INDEX,Buffer).
