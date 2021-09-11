@@ -19,7 +19,7 @@ update(Now,#aikcp_pcb{updated = true,ts_flush = TSFlush,interval = Interval} = P
       false -> {Slap, TSFlush}
     end,
   case Slap2 >= 0 of
-    false -> PCB#aikcp_pcb{current = Now, ts_flush = TSFlush2};
+    false -> {[],PCB#aikcp_pcb{current = Now, ts_flush = TSFlush2}};
     true  ->
       TSFlush3 = TSFlush + Interval,
       TSFlush4 =
@@ -276,13 +276,52 @@ split2(Len, Data, Rslt) ->
 join([]) -> <<>>;
 join([Part]) -> Part;
 join(List) ->
-  lists:foldr(fun (A, B) ->
-    if
-      bit_size(B) > 0 -> <<A/binary, B/binary>>;
-      true -> A
-    end
-  end, <<>>, List).
-recv(Binary,PCB)-> recv(Binary,{undefined,undefined},PCB).
+  lists:foldr(
+    fun (I, Acc) ->  <<Acc/binary,I/binary>> end,
+    <<>>, List).
+
+recv(Binary,PCB)->
+  PCB2 = recv(Binary,{undefined,undefined},PCB),
+  check_recv(PCB2).
+
+check_recv(#aikcp_pcb{rcv_queue = RcvQ,probe = Probe,
+                rcv_next = RcvNext, rcv_buf = RcvBuf,
+                rcv_wnd = RcvWnd} = PCB)->
+  case aikcp_queue:empty(RcvQ) of
+    true -> {undefined,PCB};
+    false ->
+      {RcvQ2, Payload} = queue_to_binary(RcvQ, [], []),
+      {RcvNext2, RcvBuf2, RcvQ3} = buffer_to_queue(RcvNext, RcvBuf, RcvQ2),
+      Probe2 =
+        case (aikcp_queue:size(RcvQ) >= RcvWnd)
+           and (aikcp_queue:size(RcvQ3) < RcvWnd) of
+          true ->Probe bor ?KCP_ASK_TELL;
+          false -> Probe
+        end,
+      {Payload,PCB#aikcp_pcb{rcv_next = RcvNext2, rcv_queue = RcvQ3,
+                             rcv_buf = RcvBuf2, probe = Probe2}}
+  end.
+
+queue_to_binary(RcvQ, PartList, DataList) ->
+  case aikcp_queue:empty(RcvQ) of
+    true  -> {RcvQ, join(DataList)};
+    false ->
+      case aikcp_queue:front(RcvQ) of
+        #aikcp_seg{frg = Frg, data = Data} when Frg =:= 0 ->
+          Data2 = join([Data | PartList]),
+          RcvQ2 = aikcp_queue:pop_front(RcvQ),
+          queue_to_binary(RcvQ2, [], [Data2 | DataList]);
+        #aikcp_seg{frg = Frg, data = Data} ->
+          case aikcp_queue:size(RcvQ) of
+            QueSize when QueSize >= (Frg + 1) ->
+              RcvQ2 = aikcp_queue:pop_front(RcvQ),
+              queue_to_binary(RcvQ2, [Data | PartList], DataList);
+            _ -> {RcvQ, join(DataList)}
+          end
+      end
+  end.
+
+
 recv(<<>>,{MaxAck,Una},PCB)-> recv_finish(MaxAck,Una,PCB);
 recv(?KCP_SEG(_Conv, ?KCP_CMD_ACK, 0, _Wnd, Ts, Sn, Una, 0, _Data, Left),
      {MaxAck,_},#aikcp_pcb{current = Now} = PCB)->
@@ -316,7 +355,17 @@ recv(?KCP_SEG(Conv, ?KCP_CMD_PUSH, Frg, Wnd, Ts, Sn, Una, Len, Data, Left),
          true -> PCB4
       end;
      true -> recv(Left,{MaxAck,Una},PCB3)
-  end.
+  end;
+recv(?KCP_SEG(_Conv, ?KCP_CMD_WASK, 0, Wnd, _Ts, _Sn, Una, 0, _Data, Left),
+     {MaxAck, _},#aikcp_pcb{probe = Probe } = PCB) ->
+  PCB2 = una(Una,PCB#aikcp_pcb{rmt_wnd = Wnd}),
+  PCB3 = shrink_sndbuf(PCB2),
+  recv(Left,{MaxAck,Una},PCB3#aikcp_pcb{probe = Probe bor ?KCP_ASK_TELL});
+recv(?KCP_SEG(_Conv, ?KCP_CMD_WINS, 0, Wnd, _Ts, _Sn, Una, 0, _Data, Left),
+     {MaxAck, _}, PCB) ->
+  PCB2 = una(Una,PCB#aikcp_pcb{rmt_wnd = Wnd}),
+  PCB3 = shrink_sndbuf(PCB2),
+  recv(Left,{MaxAck,Una},PCB3).
 
 append_data(#aikcp_seg{sn = Sn},#aikcp_pcb{rcv_next = RcvNext, rcv_wnd = Rwnd} = PCB)
     when Sn >= RcvNext + Rwnd; Sn < RcvNext -> PCB;
@@ -371,7 +420,6 @@ recv_finish(Una,#aikcp_pcb{snd_una = SndUna, cwnd = Cwnd, rmt_wnd = Rwnd}= PCB)
   when SndUna =< Una; Cwnd >= Rwnd -> PCB;
 recv_finish(_Una,#aikcp_pcb{mss = MSS, cwnd = Cwnd, incr = Incr,
                             ssthresh = Ssth, rmt_wnd = Rwnd} = PCB) ->
-
   if
     Cwnd >= Rwnd -> PCB;
     true ->
