@@ -1,8 +1,11 @@
--module(aikcp_ctrl).
+-module(aikcp_pcb).
 -compile({inline,[split/2,queue_send/2]}).
 
 -include("aikcp.hrl").
--export([send/2,new/1,update/1]).
+-export([send/2,
+         recv/2,
+         new/1,
+         update/1]).
 
 
 new(Conv)-> #aikcp_pcb{conv = Conv}.
@@ -279,3 +282,198 @@ join(List) ->
       true -> A
     end
   end, <<>>, List).
+recv(Binary,PCB)-> recv(Binary,{undefined,undefined},PCB).
+recv(<<>>,{MaxAck,Una},PCB)-> recv_finish(MaxAck,Una,PCB);
+recv(?KCP_SEG(_Conv, ?KCP_CMD_ACK, 0, _Wnd, Ts, Sn, Una, 0, _Data, Left),
+     {MaxAck,_},#aikcp_pcb{current = Now} = PCB)->
+  PCB2 = una(Una,PCB),
+  PCB3 = shrink_sndbuf(PCB2),
+  RTT = Now - Ts,
+  PCB4 =
+    if RTT >= 0 -> update_rtt(RTT,PCB3);
+       true -> PCB3
+    end,
+  PCB5 = ack(Sn,PCB4),
+  PCB6 = shrink_sndbuf(PCB5),
+  MaxAck2 =
+    if MaxAck == undefined -> Sn;
+       Sn > MaxAck -> Sn;
+       true -> MaxAck
+    end,
+  recv(Left,{MaxAck2, Una},PCB6);
+recv(?KCP_SEG(Conv, ?KCP_CMD_PUSH, Frg, Wnd, Ts, Sn, Una, Len, Data, Left),
+     {MaxAck,_},#aikcp_pcb{rcv_wnd = RcvWnd,
+                           rcv_next = RcvNext} = PCB)->
+  PCB2 = una(Una,PCB),
+  PCB3 = shrink_sndbuf(PCB2),
+  if Sn < (RcvWnd + RcvNext) ->
+      PCB4 = append_acklist(Sn,Ts,PCB3),
+      if Sn >= RcvNext ->
+          Seg = #aikcp_seg{conv = Conv, cmd = ?KCP_CMD_PUSH, wnd = Wnd,
+                           frg = Frg, ts = Ts, sn = Sn, una = Una,
+                           len = Len, data = Data},
+          append_data(Seg,PCB4);
+         true -> PCB4
+      end;
+     true -> recv(Left,{MaxAck,Una},PCB3)
+  end.
+
+append_data(#aikcp_seg{sn = Sn},#aikcp_pcb{rcv_next = RcvNext, rcv_wnd = Rwnd} = PCB)
+    when Sn >= RcvNext + Rwnd; Sn < RcvNext -> PCB;
+append_data(Seg,#aikcp_pcb{rcv_buf = RcvBuf, rcv_queue = RcvQ, rcv_next = RcvNext} = PCB) ->
+  Idx = aikcp_buffer:head(RcvBuf),
+  RcvBuf2 = append_data(Seg, Idx, -1,RcvBuf),
+  {RcvNext2, RcvBuf3, RcvQ2} = buffer_to_queue(RcvNext, RcvBuf2, RcvQ),
+  PCB#aikcp_pcb{rcv_buf = RcvBuf3, rcv_queue = RcvQ2, rcv_next = RcvNext2}.
+
+append_data(Seg, -1, Prev,RcvBuf) -> aikcp_buffer:insert(Prev, Seg, RcvBuf);
+append_data(Seg, Idx, Prev, RcvBuf) ->
+  Next = aikcp_buffer:next(Idx, RcvBuf),
+  case aikcp_buffer:data(Idx, RcvBuf) of
+    undefined -> RcvBuf;
+    #aikcp_seg{sn = Sn} when Sn =:= Seg#aikcp_seg.sn -> RcvBuf;
+    #aikcp_seg{sn = Sn} when Sn < Seg#aikcp_seg.sn -> append_data(Seg, Next, Idx, RcvBuf);
+    #aikcp_seg{sn = Sn} when Sn > Seg#aikcp_seg.sn -> aikcp_buffer:insert(Prev, Seg, RcvBuf)
+  end.
+
+buffer_to_queue(RcvNext, RcvBuf, RcvQ) ->
+  Idx = aikcp_buffer:head(RcvBuf),
+  buffer_to_queue(RcvNext,Idx,-1, RcvBuf, RcvQ).
+
+buffer_to_queue(RcvNext,-1,_, RcvBuf, RcvQ) ->{RcvNext, RcvBuf, RcvQ};
+buffer_to_queue(RcvNext,Idx, Prev, RcvBuf, RcvQ) ->
+  case aikcp_buffer:data(Idx, RcvBuf) of
+    undefined -> {RcvNext, RcvBuf, RcvQ};
+    #aikcp_seg{sn = Sn} = Seg when Sn =:= RcvNext ->
+      Next = aikcp_buffer:next(Idx, RcvBuf),
+      RcvBuf2 = aikcp_buffer:delete(Idx, Prev, RcvBuf),
+      RcvQ2 = aikcp_queue:push_back(Seg, RcvQ),
+      Prev2 =
+        case aikcp_buffer:head(RcvBuf2) == Next of
+          true -> -1;
+          false -> Idx
+        end,
+      buffer_to_queue(RcvNext + 1,Next,Prev2,RcvBuf2,RcvQ2);
+    _ -> {RcvNext, RcvBuf, RcvQ}
+  end.
+
+append_acklist(Sn, Ts, #aikcp_pcb{acklist = AckList,ackcount = AckCount} = PCB) ->
+  PCB#aikcp_pcb{acklist = [{Sn, Ts} | AckList],ackcount = AckCount + 1}.
+
+recv_finish(MaxAck,Una,PCB) ->
+  PCB2 =
+    if MaxAck =:= undefined -> PCB;
+       true -> fastack(MaxAck,PCB)
+    end,
+  recv_finish(Una,PCB2).
+
+recv_finish(Una,#aikcp_pcb{snd_una = SndUna, cwnd = Cwnd, rmt_wnd = Rwnd}= PCB)
+  when SndUna =< Una; Cwnd >= Rwnd -> PCB;
+recv_finish(_Una,#aikcp_pcb{mss = MSS, cwnd = Cwnd, incr = Incr,
+                            ssthresh = Ssth, rmt_wnd = Rwnd} = PCB) ->
+
+  if
+    Cwnd >= Rwnd -> PCB;
+    true ->
+      {Cwnd2, Incr2} =
+        if Cwnd < Ssth -> {Cwnd + 1, Incr + MSS};
+           true ->
+            In2 = ?MAX(Incr, MSS),
+            In3 = In2 + (MSS * MSS) div In2 + (MSS div 16),
+            DivMSS =
+              if MSS > 0 -> MSS;
+                 true -> 1
+              end,
+            C2 =
+              if (Cwnd + 1) * MSS =< In3 -> (In3 + MSS - 1) / DivMSS;
+                 true -> Cwnd
+              end,
+            {C2, In3}
+        end,
+      if Cwnd2 > Rwnd -> PCB#aikcp_pcb{cwnd = Rwnd, incr = Rwnd * MSS};
+         true -> PCB#aikcp_pcb{cwnd = Cwnd2, incr = Incr2}
+      end
+  end.
+
+
+%% Increase FaskAck count for each segment
+fastack(Sn,#aikcp_pcb{snd_una = SndUna, snd_next = SndNext} = PCB )
+    when SndUna > Sn; Sn >= SndNext -> PCB;
+fastack(Sn,#aikcp_pcb{snd_buf = SndBuf} = PCB) ->
+  Idx = aikcp_buffer:head(SndBuf),
+  SndBuf2 = fastack(Sn,Idx, SndBuf),
+  PCB#aikcp_pcb{snd_buf = SndBuf2}.
+
+fastack(_,-1, SndBuf) -> SndBuf;
+fastack(Sn, Idx, SndBuf) ->
+  case aikcp_buffer:data(Idx, SndBuf) of
+    undefined -> fastack(Sn,aikcp_buffer:next(SndBuf, Idx),SndBuf);
+    Seg when Seg#aikcp_seg.sn > Sn -> fastack(Sn, -1, SndBuf);
+    #aikcp_seg{fastack = FastAck}  = Seg->
+      Seg2 = Seg#aikcp_seg{fastack = FastAck + 1},
+      SndBuf2 = aikcp_buffer:replace(Idx, Seg2, SndBuf),
+      Next = aikcp_buffer:next(Idx,SndBuf2),
+      fastack(Sn,Next,SndBuf2)
+  end.
+
+ack(Sn,#aikcp_pcb{snd_una = SndUna,snd_next = SndNext} = PCB)
+  when SndUna > Sn; SndNext =< Sn -> PCB;
+ack(Sn,#aikcp_pcb{snd_buf = SndBuf} = PCB) ->
+  Idx = aikcp_buffer:head(SndBuf),
+  SndBuf2 = ack(Sn, Idx, -1,SndBuf),
+  PCB#aikcp_pcb{snd_buf = SndBuf2}.
+ack(_, -1, _, SndBuf) -> SndBuf;
+ack(Sn, Idx, Prev, SndBuf) ->
+  {Next2, SndBuf2} =
+    case aikcp_buffer:data(Idx, SndBuf) of
+      undefined -> {aikcp_buffer:next(Idx, SndBuf), SndBuf};
+      Seg when Seg#aikcp_seg.sn =:= Sn -> {-1, aikcp_buffer:delete(Idx, Prev, SndBuf)};
+      Seg when Seg#aikcp_seg.sn > Sn -> {-1, SndBuf};
+      Seg when Seg#aikcp_seg.sn < Sn -> {aikcp_buffer:next(Idx, SndBuf), SndBuf}
+    end,
+  ack(Sn,Next2,Idx,SndBuf2).
+  
+%% update kcp rx_rttval, rx_srtt and rx_rto
+update_rtt(RTT,PCB) when RTT < 0 -> PCB;
+update_rtt(RTT,PCB) ->
+  PCB2 =
+    if PCB#aikcp_pcb.rx_srtt == 0 ->
+        PCB#aikcp_pcb{rx_srtt = RTT, rx_rttval = RTT div 2};
+    true ->
+        Delta = abs(RTT - PCB#aikcp_pcb.rx_srtt),
+        RxRttVal = (3 * PCB#aikcp_pcb.rx_rttval + Delta) div 4,
+        RxSRttVal = (7 * PCB#aikcp_pcb.rx_srtt + RTT) div 8,
+        RxSRttVal2 =
+          if RxSRttVal < 1 -> 1;
+             true -> RxSRttVal
+          end,
+        PCB#aikcp_pcb{rx_srtt = RxSRttVal2, rx_rttval = RxRttVal}
+    end,
+  Rto = PCB2#aikcp_pcb.rx_srtt + ?MAX(PCB2#aikcp_pcb.interval, 4 * PCB2#aikcp_pcb.rx_rttval),
+  Rto2 = aikcp_util:clamp(Rto,PCB2#aikcp_pcb.rx_minrto,?KCP_RTO_MAX),
+  PCB2#aikcp_pcb{rx_rto = Rto2}.
+
+una(Una,#aikcp_pcb{snd_buf = SndBuf} = PCB)->
+  Idx = aikcp_buffer:head(SndBuf),
+  SndBuf2 = una(Una,Idx,-1,SndBuf),
+  PCB#aikcp_pcb{snd_buf = SndBuf2}.
+una(_Una,-1,_,SndBuf) -> SndBuf;
+una(Una,Idx,Prev,SndBuf) ->
+  {Next2,SndBuf2} =
+    case aikcp_buffer:data(Idx,SndBuf) of
+      undefined -> {aikcp_buffer:next(Idx,SndBuf),SndBuf};
+      Seg when Seg#aikcp_seg.sn >= Una -> {-1,SndBuf};
+      _ ->
+        Next = aikcp_buffer:next(Idx, SndBuf),
+        Buf2 = aikcp_buffer:delete(Idx, Prev, SndBuf),
+        {Next, Buf2}
+    end,
+  una(Una,Next2,Idx,SndBuf2).
+
+shrink_sndbuf(#aikcp_pcb{snd_buf = SndBuf, snd_next = SndNext} = PCB) ->
+  case aikcp_buffer:head(SndBuf) of
+    -1 -> PCB#aikcp_pcb{snd_una = SndNext};
+    Idx ->
+      Seg = aikcp_buffer:data(Idx, SndBuf),
+      PCB#aikcp_pcb{snd_una = Seg#aikcp_seg.sn}
+  end.

@@ -82,7 +82,7 @@
                     acklist = [], %当收到一个数据报文时，将其对应的 ACK 报文的 sn 号以及时间戳 ts
                                   %同时加入到acklist 中，即形成如 [sn1, ts1, sn2, ts2 …] 的列表
                     ackcount = 0, % 记录 acklist 中存放的 ACK 报文的数量
-                    ackblock = 0, % acklist 数组的可用长度，当 acklist 的容量不足时，需要进行扩容
+                    %ackblock = 0, % acklist 数组的可用长度，当 acklist 的容量不足时，需要进行扩容
                     fastresend = 0,
                     nocwnd = 0,
                     stream = true,
