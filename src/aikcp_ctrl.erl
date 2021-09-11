@@ -37,29 +37,113 @@ flush(#aikcp_pcb{ackcount = AckCount,rmt_wnd = RmtWnd,
     end,
   PCB3 =
     if RmtWnd == 0 -> update_probe(PCB2);
-       true -> PCB#aikcp_pcb{prob_wait = 0,ts_probe = 0}
+       true -> PCB#aikcp_pcb{probe_wait = 0,ts_probe = 0}
     end,
   {Buffer2,PCB4} =  flush_probe(Wnd,Buffer,PCB3),
   PWnd = pwnd(PCB4), %% 对方的窗口
-  CanSend =  SndUna + Pwnd - SndNext,
+  CanSend =  SndUna + PWnd - SndNext,
   PCB5 =
     if CanSend > 0 -> flush_data(Wnd,PWnd,PCB4);
        true ->  PCB4
     end,
+  {Buffer3,PCB6} = flush_resend(Wnd,PWnd,Buffer2,PCB5),
+  {lists:reverse(Buffer3),PCB6}.
 
-  {lists:reverse(Buffer2),PCB5}.
+
+flush_resend(Wnd,PWnd,Buffer,
+             #aikcp_pcb{fastresend = FastResend, nodelay = NoDelay,
+                        rx_rto = RxRto,snd_buf = SndBuf} = PCB)->
+  ReSent =
+    if FastResend > 0 -> FastResend;
+       true -> 16#FFFFFFFF
+    end,
+  RtoMin =
+    if NoDelay == 0 -> RxRto bsr 3;
+       true ->  0
+    end,
+  do_resend(Wnd,PWnd,ReSent,RtoMin,Buffer,
+            aikcp_buffer:head(SndBuf),false,false,PCB).
+do_resend(_Wnd,PWnd,ReSent,_RtoMin,Buffer,-1,Change,Lost,PCB)->
+  PCB2 =
+    case Change of
+      false -> PCB;
+      true  ->
+        #aikcp_pcb{snd_next = SndNext, snd_una = SndUna, mss = MSS} = PCB,
+        Thresh2 =
+          case (SndNext - SndUna) div 2 of
+            V when V < ?KCP_THRESH_MIN -> ?KCP_THRESH_MIN;
+            V -> V
+          end,
+        CWnd = Thresh2 + ReSent,
+        PCB#aikcp_pcb{cwnd = CWnd,incr = CWnd * MSS, ssthresh = Thresh2}
+    end,
+  PCB3 =
+    if Lost == true -> PCB#aikcp_pcb{ssthresh = ?MAX(?KCP_THRESH_MIN, PWnd div 2),
+                                     cwnd = 1, incr = PCB2#aikcp_pcb.mss};
+       true -> PCB2
+    end,
+  PCB4 =
+    if PCB3#aikcp_pcb.cwnd < 1 ->
+        PCB3#aikcp_pcb{cwnd = 1,incr = PCB3#aikcp_pcb.mss};
+       true -> PCB3
+    end,
+  {Buffer,PCB4};
+
+do_resend(Wnd,PWnd,ReSent,RtoMin,Buffer,Idx,Change,Lost,
+         #aikcp_pcb{current = Now,snd_buf = SndBuf,nodelay = NoDelay,
+                    rx_rto = Rto,mtu = MTU, fastlimit = FastLimit,
+                    rcv_next = RcvNext,xmit = PCBXmit} = PCB)->
+  Next = aikcp_buffer:next(Idx, SndBuf),
+  case aikcp_buffer:data(Idx,SndBuf) of
+    undefined -> do_resend(Wnd,PWnd,ReSent,RtoMin,Buffer,Next,Change,Lost,PCB);
+    #aikcp_seg{xmit = Xmit, resendts = ReSentTS,
+               fastack = FastAck, rto = SegRto} = Seg ->
+      {NeedSend,Lost2,Change2,Seg2,XmitAcc} =
+        if Xmit == 0 ->
+            {true,Lost,Change,Seg#aikcp_seg{xmit = Xmit + 1, rto = Rto,
+                                            resendts = Now + Rto + RtoMin},0};
+           Now >= ReSentTS->
+            SegRto2 =
+              if NoDelay == 0 -> SegRto + ?MAX(Rto,SegRto);
+                 NoDelay < 2 -> SegRto + SegRto div 2;
+                 true -> SegRto + Rto div 2
+              end,
+            {true,true,Change, Seg#aikcp_seg{xmit = Xmit + 1,rto = SegRto2,
+                                             resendts = Now + SegRto2},1};
+           (FastAck >= ReSent)
+           and ((Xmit < FastLimit)  or (FastLimit =< 0))->
+            {true, Lost, true, Seg#aikcp_seg{xmit = Xmit + 1, fastack = 0,
+                                             resendts = Now + SegRto},0};
+           true -> {false, Lost, Change, Seg,0}
+        end,
+
+        if NeedSend == true ->
+            #aikcp_seg{conv = Conv, frg = Frg, wnd = Wnd,
+                       sn = Sn, len = Len, data = Data} = Seg2,
+            Bin = ?KCP_SEG(Conv, ?KCP_CMD_PUSH, Frg, Wnd, Now, Sn,RcvNext, Len, Data, <<>>),
+            Buffer2 = build_buffer(Bin,Buffer,MTU),
+            SndBuf2 = aikcp_buffer:replace(Idx,Seg2#aikcp_seg{ts = Now,una = RcvNext}, SndBuf),
+            do_resend(Wnd,PWnd,ReSent,RtoMin,Buffer2,Next,Change2,Lost2,
+                      PCB#aikcp_pcb{snd_buf = SndBuf2,xmit = PCBXmit + XmitAcc});
+           true -> do_resend(Wnd,PWnd,ReSent,RtoMin,Buffer,Next,Change2,Lost2,PCB)
+        end
+  end.
+
+
+
+
 
 flush_data(Wnd,PWnd,#aikcp_pcb{snd_queue = SndQ, snd_buf = SndBuf,
                                snd_next = SndNext, snd_una = SndUna} = PCB)->
   case aikcp_queue:size(SndQ) == 0 of
     true -> PCB;
-    false -> queue_to_buffer(SndNext,SndUna + Pwnd,SndQ,SndBuf,Wnd,PCB)
+    false -> queue_to_buffer(SndNext,SndUna + PWnd,SndQ,SndBuf,Wnd,PCB)
   end.
 
 queue_to_buffer(SndNext,Limit,SndQ,SndBuf,_Wnd,PCB) when SndNext >= Limit->
   PCB#aikcp_pcb{snd_next = SndNext,snd_queue = SndQ,snd_buf = SndBuf};
 queue_to_buffer(SndNext,Limit,SndQ,SndBuf,Wnd,
-                #aikcp_pcb{conv = Conv,current = Now,
+                #aikcp_pcb{current = Now,
                            rcv_next = RcvNext,rx_rto = RxRto} = PCB)->
   Seg = aikcp_queue:front(SndQ),
   SndQ = aikcp_queue:pop_front(SndQ),
@@ -70,7 +154,7 @@ queue_to_buffer(SndNext,Limit,SndQ,SndBuf,Wnd,
 
 
 
-update_probe(#aikcp_pcb{current = Now,ts_proble = TSProbe,
+update_probe(#aikcp_pcb{current = Now,ts_probe = TSProbe,
                         probe_wait = ProbeWait,probe = Probe} = PCB)->
   if ProbeWait == 0 ->
       PCB#aikcp_pcb{probe_wait = ?KCP_PROBE_INIT,ts_probe = Now + ?KCP_PROBE_INIT};
@@ -83,7 +167,7 @@ update_probe(#aikcp_pcb{current = Now,ts_proble = TSProbe,
         if ProbeWait2 > ?KCP_PROBE_LIMIT -> ?KCP_PROBE_LIMIT;
            true -> ProbeWait2
         end,
-      PCB#aikcp_pcb{ts_probe = Now + ProbWait3,
+      PCB#aikcp_pcb{ts_probe = Now + ProbeWait3,
                     probe_wait = ProbeWait3,
                     probe = Probe bor ?KCP_ASK_SEND};
      true -> PCB
@@ -107,7 +191,7 @@ flush_ack(Wnd, #aikcp_pcb{conv = Conv,rcv_next = RcvNext,
   Buffer = flush_ack(Conv,Wnd,RcvNext, AckList, [], MTU),
   {Buffer,PCB#aikcp_pcb{acklist = [],ackcount = 0}}.
 
-flush_ack(_Conv,_Wnd,_Una, [], Buffer, Limit) -> Buffer;
+flush_ack(_Conv,_Wnd,_Una, [], Buffer, _Limit) -> Buffer;
 flush_ack(Conv,Wnd,Una,[{Sn, Ts} | Left], Buffer, Limit) ->
   Bin = ?KCP_SEG(Conv, ?KCP_CMD_ACK, 0, Wnd, Ts, Sn, Una, 0, <<>>, <<>>),
   Buffer2 = build_buffer(Bin,Buffer,Limit),

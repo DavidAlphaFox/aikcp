@@ -22,7 +22,7 @@
 -define(KCP_THRESH_MIN, 2).
 -define(KCP_PROBE_INIT, 7000).    %% 7 secs to probe window size
 -define(KCP_PROBE_LIMIT, 120000). %% up to 120 secs to probe window
-
+-define(KCP_FASTACK_LIMIT,5).
 -define(KCP_UPDATE_INTERVAL, 50).
 
 -define(KCP_STATE_ACTIVE, 1).
@@ -86,6 +86,7 @@
                     fastresend = 0,
                     nocwnd = 0,
                     stream = true,
+                    fastlimit = ?KCP_FASTACK_LIMIT,
                     datalist = []}).
 
 -define(KCP_SEG(Conv, Cmd, Frg, Wnd, Ts, Sn, Una, Len, Data, Left),
