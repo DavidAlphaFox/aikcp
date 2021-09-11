@@ -118,7 +118,7 @@ do_resend(Wnd,PWnd,ReSent,RtoMin,Buffer,Idx,Change,Lost,
         end,
 
         if NeedSend == true ->
-            #aikcp_seg{conv = Conv, frg = Frg, wnd = Wnd,
+            #aikcp_seg{conv = Conv, frg = Frg,
                        sn = Sn, len = Len, data = Data} = Seg2,
             Bin = ?KCP_SEG(Conv, ?KCP_CMD_PUSH, Frg, Wnd, Now, Sn,RcvNext, Len, Data, <<>>),
             Buffer2 = build_buffer(Bin,Buffer,MTU),
@@ -146,11 +146,11 @@ queue_to_buffer(SndNext,Limit,SndQ,SndBuf,Wnd,
                 #aikcp_pcb{current = Now,
                            rcv_next = RcvNext,rx_rto = RxRto} = PCB)->
   Seg = aikcp_queue:front(SndQ),
-  SndQ = aikcp_queue:pop_front(SndQ),
+  SndQ2 = aikcp_queue:pop_front(SndQ),
   Seg1 = Seg#aikcp_seg{cmd = ?KCP_CMD_PUSH, sn = SndNext,una = RcvNext,
                       ts = Now, resendts = Now, rto = RxRto},
   SndBuf2 = aikcp_buffer:append(Seg1,SndBuf),
-  queue_to_buffer(SndNext + 1,Limit,SndQ,SndBuf2,Wnd,PCB).
+  queue_to_buffer(SndNext + 1,Limit,SndQ2,SndBuf2,Wnd,PCB).
 
 
 
