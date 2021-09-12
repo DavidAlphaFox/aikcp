@@ -464,20 +464,28 @@ fastack(Sn, Idx, SndBuf) ->
       fastack(Sn,Next,SndBuf2)
   end.
 
-ack(Sn,#aikcp_pcb{snd_una = SndUna,snd_next = SndNext} = PCB)
-  when SndUna > Sn; SndNext =< Sn -> PCB;
-ack(Sn,#aikcp_pcb{snd_buf = SndBuf} = PCB) ->
-  Idx = aikcp_buffer:head(SndBuf),
-  SndBuf2 = ack(Sn, Idx, -1,SndBuf),
-  PCB#aikcp_pcb{snd_buf = SndBuf2}.
+ack(Sn,#aikcp_pcb{snd_buf = SndBuf,snd_una = SndUna,snd_next = SndNext} = PCB) ->
+  case aikcp_util:wrapping_less_bit32(Sn, SndUna) or
+      aikcp_util:wrapping_less_bit32(Sn, SndNext) or
+      Sn == SndNext of
+    true -> PCB;
+    false ->
+      Idx = aikcp_buffer:head(SndBuf),
+      SndBuf2 = ack(Sn, Idx, -1,SndBuf),
+      PCB#aikcp_pcb{snd_buf = SndBuf2}
+  end.
+
 ack(_, -1, _, SndBuf) -> SndBuf;
 ack(Sn, Idx, Prev, SndBuf) ->
   {Next2, SndBuf2} =
     case aikcp_buffer:data(Idx, SndBuf) of
       undefined -> {aikcp_buffer:next(Idx, SndBuf), SndBuf};
       Seg when Seg#aikcp_seg.sn =:= Sn -> {-1, aikcp_buffer:delete(Idx, Prev, SndBuf)};
-      Seg when Seg#aikcp_seg.sn > Sn -> {-1, SndBuf};
-      Seg when Seg#aikcp_seg.sn < Sn -> {aikcp_buffer:next(Idx, SndBuf), SndBuf}
+      Seg ->
+        case aikcp_util:wrapping_less_bit32(Seg#aikcp_seg.sn, Sn) of
+          true -> {aikcp_buffer:next(Idx, SndBuf), SndBuf};
+          _ -> {-1, SndBuf}
+        end
     end,
   ack(Sn,Next2,Idx,SndBuf2).
   
@@ -505,16 +513,20 @@ una(Una,#aikcp_pcb{snd_buf = SndBuf} = PCB)->
   Idx = aikcp_buffer:head(SndBuf),
   SndBuf2 = una(Una,Idx,-1,SndBuf),
   PCB#aikcp_pcb{snd_buf = SndBuf2}.
+
 una(_Una,-1,_,SndBuf) -> SndBuf;
 una(Una,Idx,Prev,SndBuf) ->
   {Next2,SndBuf2} =
     case aikcp_buffer:data(Idx,SndBuf) of
       undefined -> {aikcp_buffer:next(Idx,SndBuf),SndBuf};
-      Seg when Seg#aikcp_seg.sn >= Una -> {-1,SndBuf};
-      _ ->
-        Next = aikcp_buffer:next(Idx, SndBuf),
-        Buf2 = aikcp_buffer:delete(Idx, Prev, SndBuf),
-        {Next, Buf2}
+      Seg ->
+        case aikcp_util:wrapping_less_bit32(Una, Seg#aikcp_seg.sn) of
+          true -> {-1,SndBuf};
+          false ->
+            Next = aikcp_buffer:next(Idx, SndBuf),
+            Buf2 = aikcp_buffer:delete(Idx, Prev, SndBuf),
+            {Next, Buf2}
+        end
     end,
   una(Una,Next2,Idx,SndBuf2).
 
