@@ -31,6 +31,14 @@
 -define(MIN(F, S), case F < S of true -> F; false -> S end).
 -define(MAX(F, S), case F < S of true -> S; false -> F end).
 
+%% WRAPPING_DIFF_16(1,65535) = 2.
+%% 循环比较
+-define(WRAPPING_DIFF_32(L,R),((L - R) band 16#FFFFFFFF)).
+-define(WRAPPING_DIFF_16(L,R),((L - R) band 16#FFFF)).
+
+
+
+
 -record(aikcp_seg, {conv = 0, %会话编号，两方一致才能通信
                     cmd = 0, %指令类型，可以同时有多个指令通过与操作设置进来
                     frg = 0, % 分片的编号，当输出数据大于 MSS 时，需要将数据进行分片，frg 记录了分片时的倒序序号

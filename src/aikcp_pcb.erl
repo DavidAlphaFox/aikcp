@@ -456,24 +456,19 @@ fastack(_,-1, SndBuf) -> SndBuf;
 fastack(Sn, Idx, SndBuf) ->
   case aikcp_buffer:data(Idx, SndBuf) of
     undefined -> fastack(Sn,aikcp_buffer:next(SndBuf, Idx),SndBuf);
-    Seg when Seg#aikcp_seg.sn > Sn -> fastack(Sn, -1, SndBuf);
+    Seg when ?WRAPPING_DIFF_32(Seg#aikcp_seg.sn, Sn) > 0 -> fastack(Sn, -1, SndBuf);
     #aikcp_seg{fastack = FastAck}  = Seg->
       Seg2 = Seg#aikcp_seg{fastack = FastAck + 1},
       SndBuf2 = aikcp_buffer:replace(Idx, Seg2, SndBuf),
       Next = aikcp_buffer:next(Idx,SndBuf2),
       fastack(Sn,Next,SndBuf2)
   end.
-
-ack(Sn,#aikcp_pcb{snd_buf = SndBuf,snd_una = SndUna,snd_next = SndNext} = PCB) ->
-  case aikcp_util:wrapping_less_bit32(Sn, SndUna) or
-      aikcp_util:wrapping_less_bit32(Sn, SndNext) or
-      Sn == SndNext of
-    true -> PCB;
-    false ->
-      Idx = aikcp_buffer:head(SndBuf),
-      SndBuf2 = ack(Sn, Idx, -1,SndBuf),
-      PCB#aikcp_pcb{snd_buf = SndBuf2}
-  end.
+ack(Sn,#aikcp_pcb{snd_una = SndUna,snd_next = SndNext} = PCB)
+  when ?WRAPPING_DIFF_32(SndUna, Sn) > 0 ; ?WRAPPING_DIFF_32(Sn, SndNext) >= 0 ->PCB;
+ack(Sn,#aikcp_pcb{snd_buf = SndBuf} = PCB) ->
+  Idx = aikcp_buffer:head(SndBuf),
+  SndBuf2 = ack(Sn, Idx, -1,SndBuf),
+  PCB#aikcp_pcb{snd_buf = SndBuf2}.
 
 ack(_, -1, _, SndBuf) -> SndBuf;
 ack(Sn, Idx, Prev, SndBuf) ->
@@ -481,11 +476,8 @@ ack(Sn, Idx, Prev, SndBuf) ->
     case aikcp_buffer:data(Idx, SndBuf) of
       undefined -> {aikcp_buffer:next(Idx, SndBuf), SndBuf};
       Seg when Seg#aikcp_seg.sn =:= Sn -> {-1, aikcp_buffer:delete(Idx, Prev, SndBuf)};
-      Seg ->
-        case aikcp_util:wrapping_less_bit32(Seg#aikcp_seg.sn, Sn) of
-          true -> {aikcp_buffer:next(Idx, SndBuf), SndBuf};
-          _ -> {-1, SndBuf}
-        end
+      Seg when ?WRAPPING_DIFF_32(Seg#aikcp_seg.sn, Sn) > 0 -> {-1, SndBuf};
+      _ -> {aikcp_buffer:next(Idx, SndBuf), SndBuf}
     end,
   ack(Sn,Next2,Idx,SndBuf2).
   
@@ -519,14 +511,11 @@ una(Una,Idx,Prev,SndBuf) ->
   {Next2,SndBuf2} =
     case aikcp_buffer:data(Idx,SndBuf) of
       undefined -> {aikcp_buffer:next(Idx,SndBuf),SndBuf};
-      Seg ->
-        case aikcp_util:wrapping_less_bit32(Una, Seg#aikcp_seg.sn) of
-          true -> {-1,SndBuf};
-          false ->
-            Next = aikcp_buffer:next(Idx, SndBuf),
-            Buf2 = aikcp_buffer:delete(Idx, Prev, SndBuf),
-            {Next, Buf2}
-        end
+      Seg when ?WRAPPING_DIFF_32(Seg#aikcp_seg.sn, Una) >= 0 ->  {-1,SndBuf};
+      _ ->
+        Next = aikcp_buffer:next(Idx, SndBuf),
+        Buf2 = aikcp_buffer:delete(Idx, Prev, SndBuf),
+        {Next, Buf2}
     end,
   una(Una,Next2,Idx,SndBuf2).
 
