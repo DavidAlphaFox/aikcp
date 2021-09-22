@@ -31,10 +31,12 @@
 -define(MIN(F, S), case F < S of true -> F; false -> S end).
 -define(MAX(F, S), case F < S of true -> S; false -> F end).
 
-%% WRAPPING_DIFF_16(1,65535) = 2.
+%% WRAPPING_DIFF_16(1,65535) = 65532.
 %% 循环比较
--define(WRAPPING_DIFF_32(L,R),((L - R) band 16#FFFFFFFF)).
--define(WRAPPING_DIFF_16(L,R),((L - R) band 16#FFFF)).
+%% 如果L比R小，结果为负数
+%% 如果L比R大，结果为正数
+-define(WRAPPING_DIFF_32(L,R),(((R - L) band 16#FFFFFFFF) - ((L - R) band 16#FFFFFFFF))).
+-define(WRAPPING_DIFF_16(L,R),(((R - L) band 16#FFFF) - ((L - R) band 16#FFFF))).
 
 
 
