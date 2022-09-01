@@ -35,15 +35,11 @@
 -define(MAX(F, S), case F < S of true -> S; false -> F end).
 
 
-%% 整数比较
--define(DIFF_32(L,R),((L - R) band 16#FFFFFFFF)).
--define(DIFF_16(L,R),((L - R) band 16#FFFF)).
-
 %% 循环比较
 %% 如果L比R小，结果为负数
 %% 如果L比R大，结果为正数
--define(WRAPPING_DIFF_32(L,R),(((R - L) band 16#FFFFFFFF) - ((L - R) band 16#FFFFFFFF))).
--define(WRAPPING_DIFF_16(L,R),(((R - L) band 16#FFFF) - ((L - R) band 16#FFFF))).
+-define(DIFF_32(L,R),(((R - L) band 16#FFFFFFFF) - ((L - R) band 16#FFFFFFFF))).
+-define(DIFF_16(L,R),(((R - L) band 16#FFFF) - ((L - R) band 16#FFFF))).
 
 
 
@@ -81,7 +77,7 @@
                     snd_wnd = ?KCP_WND_SND,
                     rcv_wnd = ?KCP_WND_RCV,
                     rmt_wnd = ?KCP_WND_RCV, % 对端（rmt=remote）窗口
-                    cwnd = 0,
+                    cwnd = ?KCP_WND_SND,
                     probe = 0, % 存储探测标志位
                     current = 0,
                     interval = ?KCP_INTERVAL,

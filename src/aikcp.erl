@@ -38,9 +38,12 @@ new(Conv,Options)->
   setup(Options,PCB).
 
 setup([],PCB) -> PCB;
+setup([{stream, Stream}|T],PCB)->
+  setup(T,PCB#aikcp_pcb{stream = Stream});
 setup([{snd_wnd,SndWnd}|T],PCB) ->
   setup(T,PCB#aikcp_pcb{
             snd_wnd = SndWnd,
+            cwnd = SndWnd,
             snd_buf = aikcp_buffer:new(SndWnd)});
 setup([{rcv_wnd,RcvWnd}|T],PCB) ->
   setup(T,PCB#aikcp_pcb{

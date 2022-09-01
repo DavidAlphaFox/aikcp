@@ -5,7 +5,7 @@
 
 handle(<<>>,PCB)-> PCB;
 handle(Binary,#aikcp_pcb{mss = MSS})
-  when byte_size(Binary) >= MSS * 128->
+  when erlang:byte_size(Binary) >= MSS * 128->
   {error,fragment_overflow};
 handle(Binary,#aikcp_pcb{stream = true,snd_queue = SndQ,mss = MSS} = PCB)->
   case aikcp_queue:empty(SndQ) of
@@ -13,13 +13,19 @@ handle(Binary,#aikcp_pcb{stream = true,snd_queue = SndQ,mss = MSS} = PCB)->
     false ->
       Seg = aikcp_queue:back(SndQ),
       Diff = MSS - Seg#aikcp_seg.len,
+      Len = erlang:byte_size(Binary),
       if Diff > 0 ->
-          <<Fill:Diff/bytes,Left/binary>> = Binary,
+          {FillData,LeftData} =
+            if Len > Diff -> 
+                <<Fill:Diff/bytes,Left/binary>> = Binary,
+                {Fill,Left};
+               true -> {Binary,<<>>}
+            end,
           Data = Seg#aikcp_seg.data,
-          Data2 = <<Data/binary,Fill/binary>>,
+          Data2 = <<Data/binary,FillData/binary>>,
           Seg2 = Seg#aikcp_seg{data = Data2, len = byte_size(Data2)},
           SndQ2 = aikcp_queue:push_back(Seg2,aikcp_queue:pop_back(SndQ)),
-          send(Left,PCB#aikcp_pcb{snd_queue = SndQ2});
+          send(LeftData,PCB#aikcp_pcb{snd_queue = SndQ2});
          true -> send(Binary,PCB)
       end
   end;

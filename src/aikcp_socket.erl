@@ -118,10 +118,7 @@ handle_info({udp, Socket, _IP, InPortNo, Packet},
             #state{sock = Socket,pcb = PCB} = State) ->
   PCB2 = aikcp:input(Packet,PCB),
   {Payload,PCB3} = aikcp:recv(PCB2),
-  if Payload == undefined -> true;
-     Payload == <<>> -> true;
-     true -> io:format("Remote: ~p Payload: ~p~n",[InPortNo,Payload])
-  end,
+  io:format("Remote: ~p Payload: ~p~n",[InPortNo,Payload]),
   {noreply,State#state{pcb = PCB3}};
 
 

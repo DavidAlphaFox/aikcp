@@ -10,7 +10,7 @@ handle(PCB) -> handle(aikcp_util:millisecond(),PCB).
 
 handle(Current,#aikcp_pcb{updated = true,
                       ts_flush = TSFlush,interval = Interval} = PCB) ->
-  Slap = ?DIFF_32(Current, TSFlush),
+  Slap = Current - TSFlush,
   {Slap2, TSFlush2} =
     case (Slap >= 10000) or (Slap < -10000) of
       true -> {0, Current};
@@ -21,7 +21,7 @@ handle(Current,#aikcp_pcb{updated = true,
     true  ->
       TSFlush3 = TSFlush2 + Interval,
       TSFlush4 =
-        if ?DIFF_32(Current, TSFlush3) -> Current + Interval;
+        if ?DIFF_32(Current, TSFlush3) >= 0 -> Current + Interval;
            true -> TSFlush3
         end,
       flush(PCB#aikcp_pcb{current = Current,ts_flush = TSFlush4})
@@ -38,12 +38,13 @@ flush(#aikcp_pcb{ackcount = AckCount,rmt_wnd = RmtWnd,
     end,
   PCB3 =
     if RmtWnd == 0 -> update_probe(PCB2);
-       true -> PCB#aikcp_pcb{probe_wait = 0,ts_probe = 0}
+       true -> PCB2#aikcp_pcb{probe_wait = 0,ts_probe = 0}
     end,
   {Buffer2,PCB4} =  flush_probe(Wnd,Buffer,PCB3),
   PWnd = pwnd(PCB4), %% 对方的窗口
   PCB5 =
-    if ?DIFF_32(SndNext, (SndUna + PWnd)) < 0 -> queue_to_buffer(Wnd,PWnd,PCB4);
+    if ?DIFF_32(SndNext, ?BIT_32(SndUna + PWnd)) < 0 -> 
+        queue_to_buffer(Wnd,PWnd,PCB4);
        true ->  PCB4
     end,
   {Buffer3,PCB6} = flush_data(Wnd,PWnd,Buffer2,PCB5),
@@ -147,19 +148,22 @@ queue_to_buffer(Wnd,PWnd,
                              SndQ,SndBuf,Wnd,PCB)
   end.
 
-queue_to_buffer(SndNext,Limit,SndQ,SndBuf,_Wnd,PCB)
-  when ?DIFF_32(SndNext,Limit) >= 0 ->
-  PCB#aikcp_pcb{snd_next = SndNext,snd_queue = SndQ,snd_buf = SndBuf};
 queue_to_buffer(SndNext,Limit,SndQ,SndBuf,Wnd,
                 #aikcp_pcb{current = Now,
-                           rcv_next = RcvNext,rx_rto = RxRto} = PCB)->
+                           rcv_next = RcvNext,rx_rto = RxRto} = PCB)
+  when ?DIFF_32(SndNext,Limit) < 0 ->
   Seg = aikcp_queue:front(SndQ),
   SndQ2 = aikcp_queue:pop_front(SndQ),
   Seg1 = Seg#aikcp_seg{cmd = ?KCP_CMD_PUSH, sn = SndNext,una = RcvNext,
                       ts = Now, resendts = Now, rto = RxRto},
   SndBuf2 = aikcp_buffer:append(Seg1,SndBuf),
-  queue_to_buffer(?BIT_32(SndNext + 1),Limit,SndQ2,SndBuf2,Wnd,PCB).
-
+  case aikcp_queue:size(SndQ2) > 0 of
+    true -> queue_to_buffer(?BIT_32(SndNext + 1),Limit,SndQ2,SndBuf2,Wnd,PCB);
+    false ->
+      PCB#aikcp_pcb{snd_next = ?BIT_32(SndNext + 1),snd_queue = SndQ2,snd_buf = SndBuf2}
+  end;
+queue_to_buffer(SndNext,_,SndQ,SndBuf,_Wnd,PCB)->
+  PCB#aikcp_pcb{snd_next = SndNext,snd_queue = SndQ,snd_buf = SndBuf}.
 
 
 update_probe(#aikcp_pcb{current = Now,ts_probe = TSProbe,

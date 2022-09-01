@@ -60,7 +60,7 @@ process(?KCP_SEG(_Conv, ?KCP_CMD_ACK, _Frag, Wnd, Ts, Sn, Una, _Len, _Data, Left
   Flag = Acc#rx.flag,
   PCB2 = process_una(Una,PCB#aikcp_pcb{rmt_wnd = Wnd}),
   PCB3 = shrink_sndbuf(PCB2),
-  RTT = ?DIFF_32(Now,Ts),
+  RTT = Now - Ts,
   PCB4 =
     if RTT >= 0 -> aikcp_rtt:handle(RTT, PCB3);
        true -> PCB3
@@ -82,7 +82,7 @@ process(?KCP_SEG(Conv, ?KCP_CMD_PUSH, Frg, Wnd, Ts, Sn, Una, Len, Data, Left),
                        rcv_next = RcvNext} = PCB)->
   PCB2 = process_una(Una,PCB#aikcp_pcb{rmt_wnd = Wnd}),
   PCB3 = shrink_sndbuf(PCB2),
-  Diff = ?DIFF_32(Sn,(RcvWnd + RcvNext)),
+  Diff = ?DIFF_32(Sn,?BIT_32(RcvWnd + RcvNext)),
   if Diff < 0 ->
       PCB4 =  PCB3#aikcp_pcb{acklist = [{Sn, Ts} | AckList],
                              ackcount = AckCount + 1},
@@ -151,7 +151,7 @@ done_1(_,#aikcp_pcb{mss = MSS, cwnd = Cwnd, incr = Incr,
 process_fastack(Sn,_,
                 #aikcp_pcb{snd_una = SndUna,snd_next = SndNext} =PCB)
   when ?DIFF_32(Sn, SndUna) < 0 ;
-       ?DIFF_16(Sn, SndNext) >=0 -> PCB;
+       ?DIFF_32(Sn, SndNext) >=0 -> PCB;
 process_fastack(Sn,_,#aikcp_pcb{snd_buf = SndBuf} = PCB) ->
   Idx = aikcp_buffer:head(SndBuf),
   SndBuf2 = fastack(Sn,Idx, SndBuf),
