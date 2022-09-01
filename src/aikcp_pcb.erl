@@ -2,13 +2,13 @@
 
 -include("aikcp.hrl").
 -export([new/1,
-         update/1]).
+         handle/1]).
 
 
 new(Conv)-> #aikcp_pcb{conv = Conv}.
-update(PCB) -> update(aikcp_util:millisecond(),PCB).
+handle(PCB) -> handle(aikcp_util:millisecond(),PCB).
 
-update(Current,#aikcp_pcb{updated = true,
+handle(Current,#aikcp_pcb{updated = true,
                       ts_flush = TSFlush,interval = Interval} = PCB) ->
   Slap = ?DIFF_32(Current, TSFlush),
   {Slap2, TSFlush2} =
@@ -27,7 +27,7 @@ update(Current,#aikcp_pcb{updated = true,
       flush(PCB#aikcp_pcb{current = Current,ts_flush = TSFlush4})
   end;
 
-update(Now,PCB) -> update(Now,PCB#aikcp_pcb{current = Now,ts_flush = Now,updated = true}).
+handle(Now,PCB) -> handle(Now,PCB#aikcp_pcb{current = Now,ts_flush = Now,updated = true}).
 
 flush(#aikcp_pcb{ackcount = AckCount,rmt_wnd = RmtWnd,
                 snd_next = SndNext,snd_una = SndUna} = PCB)->

@@ -116,23 +116,24 @@ handle_info({udp_passive, Socket}, State = #state{sock = Socket}) ->
 
 handle_info({udp, Socket, _IP, InPortNo, Packet},
             #state{sock = Socket,pcb = PCB} = State) ->
-  {Payload,PCB2} = aikcp_pcb:recv(Packet,PCB),
+  PCB2 = aikcp:input(Packet,PCB),
+  {Payload,PCB3} = aikcp:recv(PCB2),
   if Payload == undefined -> true;
      Payload == <<>> -> true;
      true -> io:format("Remote: ~p Payload: ~p~n",[InPortNo,Payload])
   end,
-  {noreply,State#state{pcb = PCB2}};
+  {noreply,State#state{pcb = PCB3}};
 
 
 handle_info(kcp_update, #state{pcb = PCB,sock = Socket,peer_port = PeerPort} = State) ->
-  {Buffers,PCB2} = aikcp_pcb:update(PCB),
+  {Buffers,PCB2} = aikcp:update(PCB),
   lists:foreach(fun(Data)->
                     gen_udp:send(Socket,{127,0,0,1},PeerPort,Data)
                 end,Buffers),
   timer:send_after(?KCP_UPDATE_INTERVAL, self(), kcp_update),
   {noreply,State#state{pcb = PCB2}};
 handle_info({send, Data}, #state{pcb = PCB} = State) ->
-  PCB2 = aikcp_pcb:send(Data,PCB),
+  PCB2 = aikcp:send(Data,PCB),
   {noreply,State#state{pcb = PCB2}};
 handle_info(_Info, State) ->
   {noreply, State}.

@@ -23,7 +23,7 @@ send(Binary,PCB)->
   if PCB#aikcp_pcb.state < 0 ->
       {error,dead_link};
      true ->
-      aikcp_tx:send(Binary, PCB)
+      aikcp_tx:handle(Binary, PCB)
   end.
 new(Conv) ->
   aikcp_pcb:new(Conv).
@@ -31,7 +31,7 @@ update(PCB)->
   if PCB#aikcp_pcb.state < 0 ->
       {error,dead_link};
      true ->
-      aikcp_pcb:update(PCB)
+      aikcp_pcb:handle(PCB)
   end.
 new(Conv,Options)->
   PCB = new(Conv),
@@ -60,4 +60,10 @@ setup([{resend,Resend}|T],PCB) ->
   Resend1 = aikcp_util:clamp(Resend, 0, ?KCP_FASTACK_LIMIT - 1),
   setup(T,PCB#aikcp_pcb{fastresend = Resend1});
 setup([{nocwnd,NC}|T],PCB) ->
-  setup(T,PCB#aikcp_pcb{nocwnd = NC}).
+  setup(T,PCB#aikcp_pcb{nocwnd = NC});
+setup([{mtu, MTU}|T],PCB) ->
+  MTU1 = aikcp_util:clamp(MTU,?KCP_OVERHEAD * 2,?KCP_MTU_DEF),
+  setup(T,PCB#aikcp_pcb{mtu = MTU1,mss = MTU1 - ?KCP_OVERHEAD});
+setup([_H|T],PCB) ->
+  setup(T, PCB).
+
