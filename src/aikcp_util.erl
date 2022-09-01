@@ -1,15 +1,10 @@
 -module(aikcp_util).
--compile({inline,[wrapping_less/3]}).
--export([bit16/1,bit32/1,getaddr/1]).
+-compile({inline,[clamp/3,join/1,split/2]}).
+-export([getaddr/1]).
+-export([clamp/3]).
 -export([bit16_random/0,bit32_random/0]).
 -export([microsecond/0,millisecond/0]).
--export([clamp/3,wrapping_less_bit32/2,wrapping_less_bit16/2]).
-
--spec bit16(integer()) -> integer().
-bit16(N) when is_integer(N) -> N band 16#FFFF.
-
--spec bit32(integer()) -> integer().
-bit32(N) when is_integer(N) -> N band 16#FFFFFFFF.
+-export([join/1,split/2]).
 
 getaddr(S) when is_list(S) ->
   {ok, CAddr} = inet:getaddr(S, inet),
@@ -31,10 +26,20 @@ bit32_random()->
 clamp(Val, Min, _Max) when Val < Min -> Min;
 clamp(Val, _Min, Max) when Val > Max -> Max;
 clamp(Val, _Min, _Max) -> Val.
-wrapping_less_bit32(L,R) -> wrapping_less(L,R,16#FFFFFFFF).
-wrapping_less_bit16(L,R) -> wrapping_less(L,R,16#FFFF).
 
-wrapping_less(L,R,Mask)->
-  Down = (L - R) band Mask,
-  Up = (R - L) band Mask,
-  Up < Down.
+split(Data,Len) when byte_size(Data) =< Len -> [Data];
+split(Data,Len) -> split2(Len, Data, []).
+
+split2(_, <<>>, Rslt) -> lists:reverse(Rslt);
+split2(Len, Data, Rslt) ->
+  case Data of
+    <<Head:Len/bytes, Left/binary>> -> split2(Len, Left, [Head | Rslt]);
+    _ -> split2(Len, <<>>, [Data | Rslt])
+  end.
+
+join([]) -> <<>>;
+join([Part]) -> Part;
+join(List) ->
+  lists:foldr(
+    fun (I, Acc) ->  <<Acc/binary,I/binary>> end,
+    <<>>, List).
