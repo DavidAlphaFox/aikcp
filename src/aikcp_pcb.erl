@@ -8,7 +8,7 @@
 new(Conv)-> #aikcp_pcb{conv = Conv}.
 update(PCB) -> update(aikcp_util:millisecond(),PCB).
 
-update(_,#aikcp_pcb{updated = true,current = Current,
+update(Current,#aikcp_pcb{updated = true,
                       ts_flush = TSFlush,interval = Interval} = PCB) ->
   Slap = ?DIFF_32(Current, TSFlush),
   {Slap2, TSFlush2} =
@@ -17,14 +17,14 @@ update(_,#aikcp_pcb{updated = true,current = Current,
       false -> {Slap, TSFlush}
     end,
   case Slap2 >= 0 of
-    false -> {[],PCB#aikcp_pcb{ts_flush = TSFlush2}};
+    false -> {[],PCB#aikcp_pcb{current = Current,ts_flush = TSFlush2}};
     true  ->
       TSFlush3 = TSFlush2 + Interval,
       TSFlush4 =
         if ?DIFF_32(Current, TSFlush3) -> Current + Interval;
            true -> TSFlush3
         end,
-      flush(PCB#aikcp_pcb{ts_flush = TSFlush4})
+      flush(PCB#aikcp_pcb{current = Current,ts_flush = TSFlush4})
   end;
 
 update(Now,PCB) -> update(Now,PCB#aikcp_pcb{current = Now,ts_flush = Now,updated = true}).
